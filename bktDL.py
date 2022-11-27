@@ -1,10 +1,10 @@
 import requests
 from bs4 import BeautifulSoup
 import numpy as np
-import os
+import os, shutil
 
 session = requests.Session()
-book_url = input('enter the url of the book: \n')
+book_url = input('Enter the url of the book: \n')
 isbn = book_url.split('#')[1].split('/')[1]
 
 def get_cookies():
@@ -45,12 +45,14 @@ def get_unit_pdf(part_Info):
 
 units_to_merge = []
 def merge_pdfs(units_to_merge):
-	from PyPDF2 import PdfMerger
+	from PyPDF2 import PdfMerger, PdfWriter
 	pdfs = [f'{pdf}' for pdf in units_to_merge]
 	merger = PdfMerger()
+	writer = PdfWriter()
 	for pdf in pdfs:
-	    merger.append(pdf)
-	merger.write(f'{title.replace(" ", "_")}/{title}.pdf')
+		merger.append(pdf)
+		#writer.addBookmark(get_unit_info()['title'][0], pdfs.index(pdf) , parent=None)
+	merger.write(f'{title}.pdf')
 	merger.close()
 	print(f'	╚══ Downloaded: {title}')
 
@@ -72,3 +74,4 @@ for unit in units:
 	print(f'	╠══ {unit_tilte[0]} ==> downloaded')
 
 merge_pdfs(units_to_merge)
+shutil.rmtree(f'{title.replace(" ", "_")}')
