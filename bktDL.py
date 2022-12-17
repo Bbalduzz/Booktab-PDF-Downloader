@@ -22,6 +22,19 @@ title = soup.find('volumetitle').contents[0]
 print(title)
 units = np.array(soup.find_all('unit'), dtype=object)
 
+def get_toc(data): # un po' storto ma oh, meglio di niente
+	soup = BeautifulSoup(data.content, 'xml')
+	toc = []
+	for u in soup.select('unit'):
+		if u.find_all('h1') != []:
+			toc.append([1,u.find('title').text, -1])
+			for j in u.find_all('h1'):
+				if j.get('pageLabel').isnumeric():
+					toc.append([2, j.find('title').text, int(j.get('pageLabel'))])
+				elif isinstance(toc[-1][2], str):
+						del toc[-1]
+	return toc
+
 def get_unit_info() -> dict:
 	unit_id = unit.get('id')
 	unit_btdib = unit.get('btbid')
@@ -50,6 +63,7 @@ def merge_pdfs(units_to_merge):
 		with open(f'{title}.pdf', 'wb') as handler:
 			handler.write(pdf)
 		pdffile.insert_pdf(fitz.open(stream=pdf, filetype="pdf"))
+	pdffile.set_toc(get_toc(spine))
 	pdffile.save(f'{title}.pdf')
 	print(f'	╚══ Downloaded: {title}')
 
@@ -58,6 +72,7 @@ for unit in units:
 	unit_btbid = get_unit_info()['btbid']
 	unit_url = f"https://web-booktab.zanichelli.it/api/v1/resources_web/{isbn}/{unit_btbid}/config.xml"
 	part_info = session.get(unit_url, cookies=cookie)
+	print(part_info.content)
 	unit_pdf_name = get_unit_pdf(part_info)
 	unit_url_pdf = f"https://web-booktab.zanichelli.it/api/v1/resources_web/{isbn}/{unit_btbid}/{unit_pdf_name}.pdf"
 	pdfcontent = session.get(unit_url_pdf, cookies=cookie).content
