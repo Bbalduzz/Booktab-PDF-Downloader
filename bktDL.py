@@ -1,29 +1,31 @@
 import requests
 from bs4 import BeautifulSoup
 import numpy as np
-import os, shutil
 
 session = requests.Session()
 book_url = input('Enter the url of the book: \n')
 isbn = book_url.split('#')[1].split('/')[1]
 
-def get_cookies():
-    with open('cookies.txt', 'r') as f: string = f.readline()
-    token, booktab_token = string.split(';')
-    token_value = token.split('=')[1]
-    booktab_token_value = booktab_token.split('=')[1]
-    return {'token': token_value, 'booktab_token': booktab_token_value}
-cookie = get_cookies()
+def set_cookies():
+	with open('cookies.txt', 'r') as f: string = f.readline()
+	output_dict = {}
+	elements = string.split('; ')
+	for element in elements:
+		key, value = element.split('=')
+		output_dict[key] = value
+	session.cookies.update(output_dict)
+
+set_cookies()
 
 spine_url = f'https://web-booktab.zanichelli.it/api/v1/resources_web/{isbn}/spine.xml'
-spine = session.get(spine_url, cookies=cookie)
+spine = session.get(spine_url)
 soup = BeautifulSoup(spine.content, 'xml')
 title = soup.find('volumetitle').contents[0]
-print(title)
 units = np.array(soup.find_all('unit'), dtype=object)
 
 def get_toc(data): # un po' storto ma oh, meglio di niente
 	soup = BeautifulSoup(data.content, 'xml')
+	print(soup)
 	toc = []
 	for u in soup.select('unit'):
 		if u.find_all('h1') != []:
@@ -33,6 +35,7 @@ def get_toc(data): # un po' storto ma oh, meglio di niente
 					toc.append([2, j.find('title').text, int(j.get('pageLabel'))])
 				elif isinstance(toc[-1][2], str):
 						del toc[-1]
+	print(toc)
 	return toc
 
 def get_unit_info() -> dict:
@@ -68,14 +71,14 @@ def merge_pdfs(units_to_merge):
 	print(f'	╚══ Downloaded: {title}')
 
 for unit in units:
-	unit_tilte = get_unit_info()['title']
-	unit_btbid = get_unit_info()['btbid']
+	unit_info = get_unit_info()
+	unit_tilte = unit_info['title']
+	unit_btbid = unit_info['btbid']
 	unit_url = f"https://web-booktab.zanichelli.it/api/v1/resources_web/{isbn}/{unit_btbid}/config.xml"
-	part_info = session.get(unit_url, cookies=cookie)
-	print(part_info.content)
+	part_info = session.get(unit_url)
 	unit_pdf_name = get_unit_pdf(part_info)
 	unit_url_pdf = f"https://web-booktab.zanichelli.it/api/v1/resources_web/{isbn}/{unit_btbid}/{unit_pdf_name}.pdf"
-	pdfcontent = session.get(unit_url_pdf, cookies=cookie).content
+	pdfcontent = session.get(unit_url_pdf).content
 	units_to_merge.append(pdfcontent)
 	print(f'	╠══ {unit_tilte[0]}')
 
