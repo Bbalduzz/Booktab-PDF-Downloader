@@ -1,85 +1,89 @@
 import requests
 from bs4 import BeautifulSoup
-import numpy as np
+import fitz
 
-session = requests.Session()
-book_url = input('Enter the url of the book: \n')
-isbn = book_url.split('#')[1].split('/')[1]
+BASE_URL = "https://web-booktab.zanichelli.it/api/v1/resources_web"
+class BookTab:
+    def __init__(self, isbn):
+        self.isbn = isbn
+        self.session = requests.Session()
+        self.cookies = self._load_cookies('cookies.txt')
+        self._update_session_cookies()
+        self.spine_data = self._fetch_spine_data()
 
-def set_cookies():
-	with open('cookies.txt', 'r') as f: string = f.readline()
-	output_dict = {}
-	elements = string.split('; ')
-	for element in elements:
-		key, value = element.split('=')
-		output_dict[key] = value
-	session.cookies.update(output_dict)
+    @staticmethod
+    def _load_cookies(filepath):
+        with open(filepath, 'r') as f:
+            return dict(item.split('=') for item in f.readline().split('; '))
 
-set_cookies()
+    def _update_session_cookies(self):
+        self.session.cookies.update(self.cookies)
 
-spine_url = f'https://web-booktab.zanichelli.it/api/v1/resources_web/{isbn}/spine.xml'
-spine = session.get(spine_url)
-soup = BeautifulSoup(spine.content, 'xml')
-title = soup.find('volumetitle').contents[0]
-units = np.array(soup.find_all('unit'), dtype=object)
+    def _fetch_spine_data(self):
+        spine_url = f"{BASE_URL}/{self.isbn}/spine.xml"
+        response = self.session.get(spine_url)
+        return BeautifulSoup(response.content, 'xml')
 
-def get_toc(data): # un po' storto ma oh, meglio di niente
-	soup = BeautifulSoup(data.content, 'xml')
-	print(soup)
-	toc = []
-	for u in soup.select('unit'):
-		if u.find_all('h1') != []:
-			toc.append([1,u.find('title').text, -1])
-			for j in u.find_all('h1'):
-				if j.get('pageLabel').isnumeric():
-					toc.append([2, j.find('title').text, int(j.get('pageLabel'))])
-				elif isinstance(toc[-1][2], str):
-						del toc[-1]
-	print(toc)
-	return toc
+    def get_toc(self):
+        toc = []
+        for u in self.spine_data.select('unit'):
+            if u.find_all('h1') != []:
+                toc.append([1,u.find('title').text, -1])
+                for j in u.find_all('h1'):
+                    if j.get('pageLabel').isnumeric():
+                        toc.append([2, j.find('title').text, int(j.get('pageLabel'))])
+                    elif isinstance(toc[-1][2], str):
+                            del toc[-1]
+        return toc
 
-def get_unit_info() -> dict:
-	unit_id = unit.get('id')
-	unit_btdib = unit.get('btbid')
-	unit_page = unit.get('page')
-	unit_title = unit.find('title').contents
-	return {
-		'id': unit_id,
-		'btbid': unit_btdib,
-		'page': unit_page,
-		'title': unit_title
-	}
+    def get_unit_info(self, unit):
+        return {
+            'id': unit.get('id'),
+            'btbid': unit.get('btbid'),
+            'page': unit.get('page'),
+            'title': unit.find('title').contents
+        }
 
-def get_unit_pdf(part_Info):
-	soup = BeautifulSoup(part_Info.content, 'xml')
-	part_name = soup.find('content').contents[0]
-	part_entries = soup.find_all('entry')
-	for pe in part_entries:
-		if pe['key'] == f'{part_name}.pdf':
-			return pe.contents[0]
+    def _fetch_pdf_url(self, unit_btbid):
+        unit_config_url = f"{BASE_URL}/{self.isbn}/{unit_btbid}/config.xml"
+        response = self.session.get(unit_config_url)
+        data = BeautifulSoup(response.content, 'xml')
+        content_name = data.find('content').contents[0]
+        for entry in data.find_all('entry'):
+            if entry['key'] == f"{content_name}.pdf":
+                return entry.contents[0]
+        return None
 
-units_to_merge = []
-def merge_pdfs(units_to_merge):
-	import fitz
-	pdffile = fitz.Document()
-	for pdf in units_to_merge:
-		with open(f'{title}.pdf', 'wb') as handler:
-			handler.write(pdf)
-		pdffile.insert_pdf(fitz.open(stream=pdf, filetype="pdf"))
-	pdffile.set_toc(get_toc(spine))
-	pdffile.save(f'{title}.pdf')
-	print(f'	╚══ Downloaded: {title}')
+    def download_unit_pdf(self, unit_btbid):
+        pdf_name = self._fetch_pdf_url(unit_btbid)
+        pdf_url = f"{BASE_URL}/{self.isbn}/{unit_btbid}/{pdf_name}.pdf"
+        return self.session.get(pdf_url).content
 
-for unit in units:
-	unit_info = get_unit_info()
-	unit_tilte = unit_info['title']
-	unit_btbid = unit_info['btbid']
-	unit_url = f"https://web-booktab.zanichelli.it/api/v1/resources_web/{isbn}/{unit_btbid}/config.xml"
-	part_info = session.get(unit_url)
-	unit_pdf_name = get_unit_pdf(part_info)
-	unit_url_pdf = f"https://web-booktab.zanichelli.it/api/v1/resources_web/{isbn}/{unit_btbid}/{unit_pdf_name}.pdf"
-	pdfcontent = session.get(unit_url_pdf).content
-	units_to_merge.append(pdfcontent)
-	print(f'	╠══ {unit_tilte[0]}')
+    def download_book(self):
+        title = self.spine_data.find('volumetitle').contents[0]
+        units_pdfs = []
+        for unit in self.spine_data.find_all('unit'):
+            unit_info = self.get_unit_info(unit)
+            pdf_data = self.download_unit_pdf(unit_info['btbid'])
+            units_pdfs.append(pdf_data)
+            print(f"Downloaded unit: {unit_info['title'][0]}")
+        self._merge_and_save_pdfs(title, units_pdfs)
 
-merge_pdfs(units_to_merge)
+    def _merge_and_save_pdfs(self, title, units_pdfs):
+        with fitz.Document() as pdf_document:
+            for pdf_data in units_pdfs:
+                pdf_document.insert_pdf(fitz.open(stream=pdf_data, filetype="pdf"))
+            pdf_document.set_toc(self.get_toc())
+            pdf_document.save(f"{title}.pdf")
+        print(f"Downloaded: {title}")
+
+
+def main():
+    book_url = input('Enter the url of the book: \n')
+    isbn = book_url.split('#')[1].split('/')[1]
+    scraper = BookTab(isbn)
+    scraper.download_book()
+
+
+if __name__ == "__main__":
+    main()
